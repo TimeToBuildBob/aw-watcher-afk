@@ -86,7 +86,15 @@ class AFKWatcher:
                     break
 
                 now = datetime.now(timezone.utc)
-                seconds_since_input = seconds_since_last_input()
+                try:
+                    seconds_since_input = seconds_since_last_input()
+                except Exception:
+                    logger.exception(
+                        "seconds_since_last_input() failed; "
+                        "retrying without changing AFK state"
+                    )
+                    sleep(self.settings.poll_time)
+                    continue
                 last_input = now - timedelta(seconds=seconds_since_input)
                 logger.debug(f"Seconds since last input: {seconds_since_input}")
 

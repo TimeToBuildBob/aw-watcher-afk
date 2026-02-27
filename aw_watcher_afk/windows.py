@@ -1,6 +1,6 @@
 import ctypes
 import time
-from ctypes import POINTER, WINFUNCTYPE, Structure, c_ulonglong  # type: ignore
+from ctypes import POINTER, Structure, c_ulonglong
 from ctypes.wintypes import BOOL, DWORD, UINT
 
 ULONGLONG = c_ulonglong
@@ -11,25 +11,26 @@ class LastInputInfo(Structure):
 
 
 def _getLastInputTick() -> int:
-    prototype = WINFUNCTYPE(BOOL, POINTER(LastInputInfo))
+    prototype = ctypes.WINFUNCTYPE(BOOL, POINTER(LastInputInfo))  # type: ignore[attr-defined]
     paramflags = ((1, "lastinputinfo"),)
     c_GetLastInputInfo = prototype(("GetLastInputInfo", ctypes.windll.user32), paramflags)  # type: ignore
 
     lastinput = LastInputInfo()
     lastinput.cbSize = ctypes.sizeof(LastInputInfo)
-    assert 0 != c_GetLastInputInfo(lastinput)
+    if 0 == c_GetLastInputInfo(lastinput):
+        raise OSError("GetLastInputInfo failed")
     return lastinput.dwTime
 
 
 def _getTickCount64() -> int:
     """Use GetTickCount64 to avoid 32-bit overflow after ~49.7 days of uptime."""
-    prototype = WINFUNCTYPE(ULONGLONG)
+    prototype = ctypes.WINFUNCTYPE(ULONGLONG)  # type: ignore[attr-defined]
     paramflags = ()
     c_GetTickCount64 = prototype(("GetTickCount64", ctypes.windll.kernel32), paramflags)  # type: ignore
     return c_GetTickCount64()
 
 
-def seconds_since_last_input():
+def seconds_since_last_input() -> float:
     tick_count = _getTickCount64()
     last_input_tick = _getLastInputTick()  # 32-bit DWORD from GetLastInputInfo
 
