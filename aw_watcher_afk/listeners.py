@@ -51,6 +51,10 @@ class KeyboardListener(EventFactory):
         )
         self._listener.start()
 
+    def stop(self):
+        if self._listener is not None:
+            self._listener.stop()
+
     def is_alive(self) -> bool:
         return self._listener is not None and self._listener.is_alive()
 
@@ -88,6 +92,10 @@ class MouseListener(EventFactory):
             on_move=self.on_move, on_click=self.on_click, on_scroll=self.on_scroll
         )
         self._listener.start()
+
+    def stop(self):
+        if self._listener is not None:
+            self._listener.stop()
 
     def is_alive(self) -> bool:
         return self._listener is not None and self._listener.is_alive()

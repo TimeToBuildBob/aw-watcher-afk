@@ -1,6 +1,5 @@
 """Tests for listener health checking and auto-recovery."""
 
-import threading
 from unittest.mock import MagicMock, patch
 
 from aw_watcher_afk.listeners import KeyboardListener, MouseListener

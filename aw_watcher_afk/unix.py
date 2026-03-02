@@ -20,6 +20,13 @@ class LastInputUnix:
         self.keyboardListener = KeyboardListener()
         self.keyboardListener.start()
 
+    def _stop_listeners(self):
+        """Stop existing listeners to avoid duplicate instances."""
+        if self.mouseListener.is_alive():
+            self.mouseListener.stop()
+        if self.keyboardListener.is_alive():
+            self.keyboardListener.stop()
+
     def _check_listeners(self):
         """Check if input listeners are still alive, restart if dead.
 
@@ -33,6 +40,9 @@ class LastInputUnix:
             self.logger.warning(
                 "Input listeners died (X server restart?), reinitializing..."
             )
+            # Stop any still-running listeners before creating new ones
+            # to avoid duplicate listener instances (e.g. if only one died)
+            self._stop_listeners()
             self._start_listeners()
             # Reset last_activity so we don't report a huge AFK gap
             self.last_activity = datetime.now()
