@@ -18,6 +18,13 @@ pynput = "*"
 # see: https://github.com/ActivityWatch/aw-watcher-window/issues/89
 python-xlib = { version = "0.31", platform = "linux" }
 
+# Optional: gamepad/joystick support via evdev (Linux only)
+# Install with: pip install evdev  (or: pip install aw-watcher-afk[gamepad])
+evdev = { version = ">=1.4", platform = "linux", optional = true }
+
+[tool.poetry.extras]
+gamepad = ["evdev"]
+
 [tool.poetry.dev-dependencies]
 mypy = "*"
 macholib = {version = "*", platform = "darwin"}

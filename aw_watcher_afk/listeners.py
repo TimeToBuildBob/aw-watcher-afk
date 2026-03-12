@@ -10,7 +10,7 @@ import logging
 import threading
 from abc import ABCMeta, abstractmethod
 from collections import defaultdict
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -125,3 +125,127 @@ class MouseListener(EventFactory):
         self.event_data["scrollX"] += abs(scrollx)
         self.event_data["scrollY"] += abs(scrolly)
         self.new_event.set()
+
+
+class GamepadListener(EventFactory):
+    """Listens for gamepad/joystick button events via evdev (Linux only, optional).
+
+    Requires the ``evdev`` package and read access to ``/dev/input/`` device files.
+    On most distros users in the ``input`` group have the required access.
+
+    Only button press events are counted (not releases), so a held button does
+    not continuously trigger "not AFK".  Analog axis events are intentionally
+    ignored to avoid false positives from stick drift.
+    """
+
+    # evdev EV_KEY values that identify a device as a gamepad/joystick
+    _GAMEPAD_BTN_CODES = None  # populated lazily after evdev is imported
+
+    def __init__(self):
+        EventFactory.__init__(self)
+        self.logger = logger.getChild("gamepad")
+        self._threads: List[threading.Thread] = []
+        self._stop_event = threading.Event()
+
+    def _reset_data(self):
+        self.event_data = {"buttons": 0}
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def start(self):
+        try:
+            import evdev  # noqa: F401
+        except ImportError:
+            self.logger.debug(
+                "evdev not installed; gamepad detection unavailable. "
+                "Install it with: pip install evdev"
+            )
+            return
+
+        devices = self._find_gamepads()
+        if not devices:
+            self.logger.debug("No gamepads/joysticks found in /dev/input/")
+            return
+
+        self.logger.info(
+            "Gamepad listener started for %d device(s): %s",
+            len(devices),
+            [d.name for d in devices],
+        )
+        self._stop_event.clear()
+        for device in devices:
+            t = threading.Thread(
+                target=self._read_events,
+                args=(device,),
+                name=f"gamepad-{device.path}",
+                daemon=True,
+            )
+            t.start()
+            self._threads.append(t)
+
+    def stop(self):
+        self._stop_event.set()
+        self._threads.clear()
+
+    def is_alive(self) -> bool:
+        return any(t.is_alive() for t in self._threads)
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _find_gamepads(self):
+        """Return all readable /dev/input/ devices that look like gamepads."""
+        import evdev
+
+        gamepads = []
+        for path in evdev.list_devices():
+            try:
+                device = evdev.InputDevice(path)
+            except (OSError, PermissionError):
+                continue
+            if self._is_gamepad(device):
+                gamepads.append(device)
+        return gamepads
+
+    @staticmethod
+    def _is_gamepad(device) -> bool:
+        """Return True if *device* appears to be a gamepad or joystick."""
+        import evdev
+
+        caps = device.capabilities()
+        if evdev.ecodes.EV_KEY not in caps:
+            return False
+        # A subset of button codes that only appear on gamepads/joysticks
+        gamepad_btns = {
+            evdev.ecodes.BTN_GAMEPAD,  # generic gamepad button base
+            evdev.ecodes.BTN_SOUTH,  # Xbox A / PS Cross
+            evdev.ecodes.BTN_EAST,  # Xbox B / PS Circle
+            evdev.ecodes.BTN_NORTH,  # Xbox Y / PS Triangle
+            evdev.ecodes.BTN_WEST,  # Xbox X / PS Square
+            evdev.ecodes.BTN_JOYSTICK,  # generic joystick button
+            evdev.ecodes.BTN_TRIGGER,  # joystick trigger
+            evdev.ecodes.BTN_THUMB,  # joystick thumb
+            evdev.ecodes.BTN_TOP,  # joystick top
+        }
+        device_btns = set(caps[evdev.ecodes.EV_KEY])
+        return bool(device_btns & gamepad_btns)
+
+    def _read_events(self, device) -> None:
+        """Read button events from *device* until stop() is called."""
+        import evdev
+
+        try:
+            for event in device.read_loop():
+                if self._stop_event.is_set():
+                    break
+                # Count button *press* events only (value == 1)
+                if event.type == evdev.ecodes.EV_KEY and event.value == 1:
+                    # self.logger.debug(f"Gamepad button press: {event.code}")
+                    self.event_data["buttons"] += 1
+                    self.new_event.set()
+        except (OSError, IOError):
+            # Device disconnected or permission lost — stop quietly
+            self.logger.debug("Gamepad device %s disconnected", device.path)

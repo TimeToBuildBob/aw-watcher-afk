@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from time import sleep
 
-from .listeners import KeyboardListener, MouseListener
+from .listeners import GamepadListener, KeyboardListener, MouseListener
 
 
 class LastInputUnix:
@@ -20,12 +20,19 @@ class LastInputUnix:
         self.keyboardListener = KeyboardListener()
         self.keyboardListener.start()
 
+        # Optional: gamepad support via evdev (Linux only).
+        # Starts silently if evdev is not installed or no gamepads are found.
+        self.gamepadListener = GamepadListener()
+        self.gamepadListener.start()
+
     def _stop_listeners(self):
         """Stop existing listeners to avoid duplicate instances."""
         if self.mouseListener.is_alive():
             self.mouseListener.stop()
         if self.keyboardListener.is_alive():
             self.keyboardListener.stop()
+        if self.gamepadListener.is_alive():
+            self.gamepadListener.stop()
 
     def _check_listeners(self):
         """Check if input listeners are still alive, restart if dead.
@@ -52,12 +59,18 @@ class LastInputUnix:
         #       Could be solved by creating a custom listener.
         self._check_listeners()
         now = datetime.now()
-        if self.mouseListener.has_new_event() or self.keyboardListener.has_new_event():
+        has_event = (
+            self.mouseListener.has_new_event()
+            or self.keyboardListener.has_new_event()
+            or self.gamepadListener.has_new_event()
+        )
+        if has_event:
             self.logger.debug("New event")
             self.last_activity = now
             # Get/clear events
             self.mouseListener.next_event()
             self.keyboardListener.next_event()
+            self.gamepadListener.next_event()
         return (now - self.last_activity).total_seconds()
 
 
