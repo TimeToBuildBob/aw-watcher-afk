@@ -145,6 +145,7 @@ class GamepadListener(EventFactory):
         EventFactory.__init__(self)
         self.logger = logger.getChild("gamepad")
         self._threads: List[threading.Thread] = []
+        self._devices = []  # track open devices for cleanup in stop()
         self._stop_event = threading.Event()
 
     def _reset_data(self):
@@ -175,6 +176,7 @@ class GamepadListener(EventFactory):
             [d.name for d in devices],
         )
         self._stop_event.clear()
+        self._devices = list(devices)  # keep references for cleanup
         for device in devices:
             t = threading.Thread(
                 target=self._read_events,
@@ -187,6 +189,17 @@ class GamepadListener(EventFactory):
 
     def stop(self):
         self._stop_event.set()
+        # Close devices to unblock threads stuck in read_loop()
+        # (the blocking select() call is released when the FD is closed)
+        for device in self._devices:
+            try:
+                device.close()
+            except (OSError, IOError):
+                pass
+        self._devices.clear()
+        # Wait briefly for threads to finish
+        for t in self._threads:
+            t.join(timeout=2.0)
         self._threads.clear()
 
     def is_alive(self) -> bool:
@@ -208,6 +221,9 @@ class GamepadListener(EventFactory):
                 continue
             if self._is_gamepad(device):
                 gamepads.append(device)
+            else:
+                # Close non-gamepad devices to avoid FD leaks
+                device.close()
         return gamepads
 
     @staticmethod
@@ -249,3 +265,9 @@ class GamepadListener(EventFactory):
         except (OSError, IOError):
             # Device disconnected or permission lost — stop quietly
             self.logger.debug("Gamepad device %s disconnected", device.path)
+        finally:
+            # Always close the device FD on thread exit
+            try:
+                device.close()
+            except (OSError, IOError):
+                pass
