@@ -82,6 +82,7 @@ def test_unix_reinitializes_dead_listeners(MockGamepad, MockMouse, MockKeyboard)
     # Listeners should have been restarted (new instances created)
     assert MockKeyboard.call_count == 2
     assert MockMouse.call_count == 2
+    assert MockGamepad.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -122,14 +123,19 @@ def test_gamepad_listener_not_alive_without_devices():
 
 def test_gamepad_listener_starts_with_device():
     """GamepadListener.start() should launch a reader thread per device."""
+    import sys
+    from unittest.mock import MagicMock
+
     listener = GamepadListener()
 
     mock_device = MagicMock()
     mock_device.path = "/dev/input/event5"
     mock_device.name = "Xbox Controller"
 
-    # Patch _find_gamepads and _read_events so no real I/O happens
+    # evdev is an optional dependency; mock the import so the test runs without it
+    mock_evdev = MagicMock()
     with (
+        patch.dict(sys.modules, {"evdev": mock_evdev}),
         patch.object(listener, "_find_gamepads", return_value=[mock_device]),
         patch.object(listener, "_read_events"),
     ):

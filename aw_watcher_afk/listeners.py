@@ -138,9 +138,6 @@ class GamepadListener(EventFactory):
     ignored to avoid false positives from stick drift.
     """
 
-    # evdev EV_KEY values that identify a device as a gamepad/joystick
-    _GAMEPAD_BTN_CODES = None  # populated lazily after evdev is imported
-
     def __init__(self):
         EventFactory.__init__(self)
         self.logger = logger.getChild("gamepad")
@@ -235,9 +232,10 @@ class GamepadListener(EventFactory):
         if evdev.ecodes.EV_KEY not in caps:
             return False
         # A subset of button codes that only appear on gamepads/joysticks
+        # Note: BTN_GAMEPAD == BTN_SOUTH (both 0x130) in the Linux input subsystem;
+        # BTN_SOUTH is kept as the more descriptive name and BTN_GAMEPAD omitted.
         gamepad_btns = {
-            evdev.ecodes.BTN_GAMEPAD,  # generic gamepad button base
-            evdev.ecodes.BTN_SOUTH,  # Xbox A / PS Cross
+            evdev.ecodes.BTN_SOUTH,  # Xbox A / PS Cross (also == BTN_GAMEPAD)
             evdev.ecodes.BTN_EAST,  # Xbox B / PS Circle
             evdev.ecodes.BTN_NORTH,  # Xbox Y / PS Triangle
             evdev.ecodes.BTN_WEST,  # Xbox X / PS Square
