@@ -303,3 +303,85 @@ def test_unix_restarts_when_only_gamepad_dies(MockGamepad, MockMouse, MockKeyboa
     assert MockKeyboard.call_count == 2
     assert MockMouse.call_count == 2
     assert MockGamepad.call_count == 2
+
+
+def test_gamepad_needs_restart_true_when_one_of_two_threads_dies():
+    """needs_restart() must be True if any thread dies, not only when all die.
+
+    This covers multi-gamepad setups where one device is removed while another
+    stays alive; without this the dead device goes silently unmonitored.
+
+    Uses direct thread-state injection to avoid mock-revert races with
+    background threads (see lessons/tools/mock-revert-race-background-threads.md).
+    """
+    import threading
+
+    listener = GamepadListener()
+    listener._was_started = True
+
+    # dead_thread: simulates a gamepad that was unplugged (thread exited)
+    dead_thread = threading.Thread(target=lambda: None, daemon=True)
+    dead_thread.start()
+    dead_thread.join(timeout=2.0)
+    assert not dead_thread.is_alive()
+
+    # live_thread: simulates a gamepad still connected (thread still running)
+    keep_alive = threading.Event()
+    live_thread = threading.Thread(target=keep_alive.wait, daemon=True)
+    live_thread.start()
+
+    listener._threads = [dead_thread, live_thread]
+
+    try:
+        # is_alive() should see the live thread; needs_restart() should fire on the dead one
+        assert listener.is_alive()
+        assert listener.needs_restart()
+    finally:
+        keep_alive.set()
+        live_thread.join(timeout=2.0)
+
+
+@patch("aw_watcher_afk.unix.KeyboardListener")
+@patch("aw_watcher_afk.unix.MouseListener")
+@patch("aw_watcher_afk.unix.GamepadListener")
+def test_unix_log_message_when_gamepad_and_keyboard_die_together(
+    MockGamepad, MockMouse, MockKeyboard, caplog
+):
+    """When gamepad AND mouse/keyboard die simultaneously, the log should say
+    'All input listeners died' (XServer restart context), not just 'Gamepad
+    listener died' (device-removal context).
+    """
+    import logging
+    from aw_watcher_afk.unix import LastInputUnix
+
+    mock_kb = MockKeyboard.return_value
+    mock_mouse = MockMouse.return_value
+    mock_gamepad = MockGamepad.return_value
+
+    mock_kb.is_alive.return_value = True
+    mock_mouse.is_alive.return_value = True
+    mock_gamepad.is_alive.return_value = True
+    mock_gamepad.needs_restart.return_value = False
+    mock_kb.has_new_event.return_value = False
+    mock_mouse.has_new_event.return_value = False
+    mock_gamepad.has_new_event.return_value = False
+
+    unix = LastInputUnix()
+    unix.seconds_since_last_input()
+
+    # Simulate all listeners dying at once (XServer crash)
+    mock_kb.is_alive.return_value = False
+    mock_mouse.is_alive.return_value = False
+    mock_gamepad.is_alive.return_value = False
+    mock_gamepad.needs_restart.return_value = True
+
+    with caplog.at_level(logging.WARNING):
+        unix.seconds_since_last_input()
+
+    warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("All input listeners died" in m for m in warning_messages), (
+        f"Expected 'All input listeners died' in log, got: {warning_messages}"
+    )
+    assert not any("Gamepad listener died" in m for m in warning_messages), (
+        f"Should not say 'Gamepad listener died' when all died: {warning_messages}"
+    )

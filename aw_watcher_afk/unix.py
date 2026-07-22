@@ -53,7 +53,15 @@ class LastInputUnix:
             or not self.keyboardListener.is_alive()
             or gamepad_died
         ):
-            if gamepad_died:
+            mouse_kb_died = (
+                not self.mouseListener.is_alive()
+                or not self.keyboardListener.is_alive()
+            )
+            if gamepad_died and mouse_kb_died:
+                self.logger.warning(
+                    "All input listeners died (X server restart?), reinitializing..."
+                )
+            elif gamepad_died:
                 self.logger.warning(
                     "Gamepad listener died (device removed?), reinitializing..."
                 )

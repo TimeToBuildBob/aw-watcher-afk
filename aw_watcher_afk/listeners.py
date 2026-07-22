@@ -209,15 +209,22 @@ class GamepadListener(EventFactory):
         return any(t.is_alive() for t in self._threads)
 
     def needs_restart(self) -> bool:
-        """Return True if start() previously launched threads but they have all died.
+        """Return True if start() previously launched threads but any have died.
 
         Used to distinguish a system that simply has no gamepad attached (in
         which case start() returned early and no restart is needed) from one
-        where all reader threads have exited unexpectedly (e.g. device removed
-        or USB error). In the latter case the caller should reinitialize the
-        listener so a reconnected gamepad starts being tracked again.
+        where one or more reader threads have exited unexpectedly (e.g. device
+        removed or USB error). In the latter case the caller should reinitialize
+        the listener so all gamepads start being tracked again.
+
+        Detects partial failure (one of N gamepads removed) in addition to
+        total failure (all gamepads removed), so multi-gamepad setups don't
+        silently lose a device until the last one dies.
         """
-        return self._was_started and not self.is_alive()
+        if not self._was_started:
+            return False
+        # Restart when any reader thread has died, not just when all have.
+        return any(not t.is_alive() for t in self._threads)
 
     # ------------------------------------------------------------------
     # Internals
