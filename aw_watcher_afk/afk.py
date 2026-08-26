@@ -88,7 +88,9 @@ class AFKWatcher:
                 now = datetime.now(timezone.utc)
                 try:
                     seconds_since_input = seconds_since_last_input()
-                except Exception:
+                except OSError:
+                    if system != "Windows":
+                        raise
                     logger.exception(
                         "seconds_since_last_input() failed; "
                         "retrying without changing AFK state"

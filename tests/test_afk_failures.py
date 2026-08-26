@@ -27,9 +27,9 @@ class HeartbeatFailureTests(unittest.TestCase):
         watcher._initial_ppid = os.getppid()
         return watcher
 
-    def run_loop(self, watcher, samples):
+    def run_loop(self, watcher, samples, system_name="Windows"):
         with ExitStack() as stack:
-            stack.enter_context(patch("aw_watcher_afk.afk.system", "Windows"))
+            stack.enter_context(patch("aw_watcher_afk.afk.system", system_name))
             stack.enter_context(
                 patch(
                     "aw_watcher_afk.afk.seconds_since_last_input",
@@ -70,6 +70,12 @@ class HeartbeatFailureTests(unittest.TestCase):
         ping.assert_not_called()
         self.assertEqual(sleep.call_count, 2)
         self.assertEqual(log_exception.call_count, 2)
+
+    def test_non_windows_failure_reaches_supervisor(self):
+        watcher = self.make_watcher()
+
+        with self.assertRaisesRegex(OSError, "listener failed"):
+            self.run_loop(watcher, [OSError("listener failed")], system_name="Linux")
 
 
 if __name__ == "__main__":
