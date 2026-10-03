@@ -1,6 +1,7 @@
 """Pure diagnostic tests; no Windows hooks or display required."""
 
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 from contextlib import ExitStack, redirect_stdout
@@ -60,7 +61,12 @@ class NativeLifecycleTests(unittest.TestCase):
     """API doubles exercise control flow, not Windows ABI/hook delivery."""
 
     def run_native(
-        self, fail_hook=0, fail_query=False, callback_failure=False, interrupt=False
+        self,
+        fail_hook=0,
+        fail_query=False,
+        callback_failure=False,
+        interrupt=False,
+        deliver_events=False,
     ):
         api = SimpleNamespace()
         api.SetWindowsHookExW = Mock(
@@ -125,6 +131,35 @@ class NativeLifecycleTests(unittest.TestCase):
                     return 1
 
                 api.GetMessageW.side_effect = deliver
+            elif deliver_events:
+                stack.enter_context(
+                    patch.object(
+                        diagnostic.ctypes,
+                        "cast",
+                        side_effect=[
+                            SimpleNamespace(contents=SimpleNamespace(flags=0x00)),
+                            SimpleNamespace(contents=SimpleNamespace(flags=0x01)),
+                        ],
+                        create=True,
+                    )
+                )
+                pulses = [0]
+
+                def deliver(msg, *args):
+                    if pulses[0] >= 2:
+                        return 0
+                    if pulses[0] == 0:
+                        # Successful events must reach the next emitted row.
+                        keyboard = api.SetWindowsHookExW.call_args_list[0].args[1]
+                        mouse = api.SetWindowsHookExW.call_args_list[1].args[1]
+                        self.assertEqual(keyboard(0, 0, 0), 99)
+                        self.assertEqual(mouse(0, 0, 0), 99)
+                    msg._obj.message = 0x0113
+                    msg._obj.wParam = 77
+                    pulses[0] += 1
+                    return 1
+
+                api.GetMessageW.side_effect = deliver
             error = None
             try:
                 diagnostic.run(1)
@@ -169,6 +204,19 @@ class NativeLifecycleTests(unittest.TestCase):
         self.assertEqual(api.CallNextHookEx.call_count, 2)
         self.assertEqual(api.UnhookWindowsHookEx.call_count, 2)
         api.KillTimer.assert_called_once_with(None, 77)
+
+    def test_successful_event_lands_in_next_row_and_resets(self):
+        api, output, error = self.run_native(deliver_events=True)
+        self.assertIsNone(error)
+        rows = [json.loads(line) for line in output.splitlines() if '"events"' in line]
+        self.assertEqual(len(rows), 3)
+        # First row is emitted before any hook event.
+        self.assertEqual(rows[0]["events"]["keyboard_unflagged"], 0)
+        # The successful event is counted in the row emitted at the timer pulse.
+        self.assertEqual(rows[1]["events"]["keyboard_unflagged"], 1)
+        self.assertEqual(rows[1]["events"]["mouse_injected"], 1)
+        # Counts are interval-only: the following row resets to zero.
+        self.assertTrue(all(value == 0 for value in rows[2]["events"].values()))
 
 
 if __name__ == "__main__":
