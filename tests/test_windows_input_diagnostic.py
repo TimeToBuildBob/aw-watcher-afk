@@ -66,6 +66,7 @@ class NativeLifecycleTests(unittest.TestCase):
         fail_query=False,
         callback_failure=False,
         interrupt=False,
+        interrupt_on_pass=False,
         deliver_events=False,
     ):
         api = SimpleNamespace()
@@ -73,7 +74,10 @@ class NativeLifecycleTests(unittest.TestCase):
             side_effect=[101, 0] if fail_hook == 2 else [101, 102]
         )
         api.UnhookWindowsHookEx = Mock(return_value=1)
-        api.CallNextHookEx = Mock(return_value=99)
+        api.CallNextHookEx = Mock(
+            side_effect=KeyboardInterrupt if interrupt_on_pass else None,
+            return_value=99,
+        )
         api.SetTimer = Mock(return_value=77)
         api.KillTimer = Mock(return_value=1)
         api.TranslateMessage = Mock(return_value=1)
@@ -137,6 +141,23 @@ class NativeLifecycleTests(unittest.TestCase):
                         self.assertEqual(callback(0, 0, 0), 99)
                     # A negative hook code must pass straight through.
                     self.assertEqual(callback(-1, 0, 0), 99)
+                    msg._obj.message = 0x0113
+                    msg._obj.wParam = 77
+                    return 1
+
+                api.GetMessageW.side_effect = deliver
+            elif interrupt_on_pass:
+
+                def deliver(msg, *args):
+                    clock["now"] += 0.1
+                    callback = api.SetWindowsHookExW.call_args_list[0].args[1]
+                    # Cancellation can surface on the pass-through call's return;
+                    # it must be contained, not escape the ctypes callback.
+                    try:
+                        result = callback(-1, 0, 0)
+                    except KeyboardInterrupt:
+                        self.fail("KeyboardInterrupt escaped the ctypes callback")
+                    self.assertEqual(result, 0)
                     msg._obj.message = 0x0113
                     msg._obj.wParam = 77
                     return 1
@@ -214,6 +235,12 @@ class NativeLifecycleTests(unittest.TestCase):
         api, output, error = self.run_native(interrupt=True)
         self.assertIsInstance(error, KeyboardInterrupt)
         self.assertEqual(api.CallNextHookEx.call_count, 2)
+        self.assertEqual(api.UnhookWindowsHookEx.call_count, 2)
+        api.KillTimer.assert_called_once_with(None, 77)
+
+    def test_interrupt_on_pass_through_stops_without_escaping(self):
+        api, output, error = self.run_native(interrupt_on_pass=True)
+        self.assertIsInstance(error, KeyboardInterrupt)
         self.assertEqual(api.UnhookWindowsHookEx.call_count, 2)
         api.KillTimer.assert_called_once_with(None, 77)
 

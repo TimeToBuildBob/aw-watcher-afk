@@ -125,7 +125,13 @@ def run(duration: int) -> None:
             except Exception:
                 # Fail visibly outside the callback, but ALWAYS pass input through.
                 callback_errors.append(kind)
-            return user32.CallNextHookEx(None, code, message, data)
+            try:
+                return user32.CallNextHookEx(None, code, message, data)
+            except KeyboardInterrupt:
+                # Cancellation can surface on this call's return too; keep the
+                # callback boundary exception-free so the loop still stops.
+                interrupted = True
+                return 0
 
         return hook_proc(observe)
 
