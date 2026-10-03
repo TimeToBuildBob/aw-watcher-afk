@@ -132,6 +132,11 @@ def run(duration: int) -> None:
                 # callback boundary exception-free so the loop still stops.
                 interrupted = True
                 return 0
+            except Exception:
+                # An exception escaping a ctypes callback is reported only by
+                # ctypes; defer it so the run fails visibly instead.
+                callback_errors.append(kind)
+                return 0
 
         return hook_proc(observe)
 
@@ -143,12 +148,16 @@ def run(duration: int) -> None:
     started = time.monotonic()
     previous = None
 
-    def emit_sample():
-        nonlocal previous
+    def check_state():
+        # Deferred failures are only visible in the main thread.
         if interrupted:
             raise KeyboardInterrupt
         if callback_errors:
             raise RuntimeError("Hook callback failed; observation is incomplete")
+
+    def emit_sample():
+        nonlocal previous
+        check_state()
         info = LastInputInfo(ctypes.sizeof(LastInputInfo), 0)
         if not user32.GetLastInputInfo(ctypes.byref(info)):
             raise ctypes.WinError(ctypes.get_last_error())
@@ -202,6 +211,9 @@ def run(duration: int) -> None:
             else:
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
+        # A callback failure landing after the final sample must still surface,
+        # rather than reporting a clean run over incomplete observation.
+        check_state()
     finally:
         if timer:
             user32.KillTimer(None, timer)

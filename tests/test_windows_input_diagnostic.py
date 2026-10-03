@@ -68,6 +68,8 @@ class NativeLifecycleTests(unittest.TestCase):
         interrupt=False,
         interrupt_on_pass=False,
         deliver_events=False,
+        late_callback_failure=False,
+        pass_through_failure=False,
     ):
         api = SimpleNamespace()
         api.SetWindowsHookExW = Mock(
@@ -193,6 +195,37 @@ class NativeLifecycleTests(unittest.TestCase):
                     return 1
 
                 api.GetMessageW.side_effect = deliver
+            elif pass_through_failure:
+                api.CallNextHookEx.side_effect = ValueError
+
+                def deliver(msg, *args):
+                    clock["now"] += 0.1
+                    callback = api.SetWindowsHookExW.call_args_list[0].args[1]
+                    # A non-interrupt pass-through failure must be contained and
+                    # deferred, never escape the ctypes callback boundary.
+                    try:
+                        result = callback(-1, 0, 0)
+                    except Exception:
+                        self.fail("exception escaped the ctypes callback")
+                    self.assertEqual(result, 0)
+                    msg._obj.message = 0x0113
+                    msg._obj.wParam = 77
+                    return 1
+
+                api.GetMessageW.side_effect = deliver
+            elif late_callback_failure:
+
+                def deliver(msg, *args):
+                    clock["now"] += 0.1
+                    callback = api.SetWindowsHookExW.call_args_list[0].args[1]
+                    # Fail after the last sample, then quit the loop cleanly.
+                    with patch.object(
+                        diagnostic.ctypes, "cast", side_effect=ValueError
+                    ):
+                        self.assertEqual(callback(0, 0, 0), 99)
+                    return 0
+
+                api.GetMessageW.side_effect = deliver
             error = None
             try:
                 diagnostic.run(1)
@@ -241,6 +274,18 @@ class NativeLifecycleTests(unittest.TestCase):
     def test_interrupt_on_pass_through_stops_without_escaping(self):
         api, output, error = self.run_native(interrupt_on_pass=True)
         self.assertIsInstance(error, KeyboardInterrupt)
+        self.assertEqual(api.UnhookWindowsHookEx.call_count, 2)
+        api.KillTimer.assert_called_once_with(None, 77)
+
+    def test_pass_through_failure_is_deferred_not_escaped(self):
+        api, output, error = self.run_native(pass_through_failure=True)
+        self.assertIsInstance(error, RuntimeError)
+        self.assertEqual(api.UnhookWindowsHookEx.call_count, 2)
+        api.KillTimer.assert_called_once_with(None, 77)
+
+    def test_callback_failure_after_final_sample_still_surfaces(self):
+        api, output, error = self.run_native(late_callback_failure=True)
+        self.assertIsInstance(error, RuntimeError)
         self.assertEqual(api.UnhookWindowsHookEx.call_count, 2)
         api.KillTimer.assert_called_once_with(None, 77)
 
