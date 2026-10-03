@@ -80,6 +80,9 @@ class NativeLifecycleTests(unittest.TestCase):
         api.DispatchMessageW = Mock(return_value=0)
         api.GetLastInputInfo = Mock(return_value=not fail_query)
         api.GetMessageW = Mock(return_value=0)
+        # Deterministic clock: the message loop's real-monotonic deadline must
+        # not depend on wall-clock time under a loaded test runner.
+        clock = {"now": 0.0}
         kernel = SimpleNamespace(
             GetTickCount64=Mock(return_value=5000),
             GetModuleHandleW=Mock(return_value=1),
@@ -113,9 +116,17 @@ class NativeLifecycleTests(unittest.TestCase):
                 )
             )
             stack.enter_context(redirect_stdout(output))
+            stack.enter_context(
+                patch.object(
+                    diagnostic,
+                    "time",
+                    SimpleNamespace(monotonic=lambda: clock["now"]),
+                )
+            )
             if callback_failure or interrupt:
 
                 def deliver(msg, *args):
+                    clock["now"] += 0.1
                     callback = api.SetWindowsHookExW.call_args_list[0].args[1]
                     # A classification exception must never suppress the event.
                     with patch.object(
@@ -146,6 +157,7 @@ class NativeLifecycleTests(unittest.TestCase):
                 pulses = [0]
 
                 def deliver(msg, *args):
+                    clock["now"] += 0.1
                     if pulses[0] >= 2:
                         return 0
                     if pulses[0] == 0:
