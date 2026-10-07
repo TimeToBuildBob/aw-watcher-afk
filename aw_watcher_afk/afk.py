@@ -177,7 +177,10 @@ class AFKWatcher:
                         # 1ms. An earlier timestamp fails heartbeat_merge and
                         # is stored as a duplicate (see aw-watcher-afk#61).
                         ts = last_input
-                        if not_afk_start is not None and ts <= not_afk_start:
+                        if (
+                            not_afk_start is not None
+                            and ts < not_afk_start + td1ms
+                        ):
                             ts = not_afk_start + td1ms
                         self.ping(afk, timestamp=ts)
 

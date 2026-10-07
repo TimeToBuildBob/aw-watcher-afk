@@ -173,6 +173,32 @@ class ScreenLockTests(unittest.TestCase):
             " — would be stored as a same-timestamp duplicate (#61)",
         )
 
+    def test_steady_heartbeat_sub_millisecond_after_return_stays_ordered(self):
+        # Fractional-millisecond variant (Greptile P1 on #91): on Windows idle
+        # time uses whole milliseconds while `now` includes microseconds, so
+        # last_input can land strictly between not_afk_start and
+        # not_afk_start + 1ms. The steady-state ping must still be clamped to
+        # not_afk_start + 1ms, or it is stored out of order (aw-watcher-afk#61).
+        #
+        #   poll 2: afk_end = NOW + 5s − 2s = NOW + 3s; not-afk event at
+        #           NOW + 3s + 1ms.
+        #   poll 3: idle 6.9995s → last_input = NOW + 10s − 6.9995s
+        #           = NOW + 3.0005s, i.e. 0.5ms after not_afk_start but
+        #           0.5ms before the not-afk event.
+        calls = self.run_loop([(200.0, False), (2.0, False), (6.9995, False)])
+
+        self.assertEqual(
+            [c.args[0] for c in calls], [False, True, True, False, False]
+        )
+        not_afk_event_ts = calls[3].kwargs["timestamp"]
+        self.assertEqual(not_afk_event_ts, NOW + timedelta(seconds=3, milliseconds=1))
+        self.assertGreaterEqual(
+            calls[4].kwargs["timestamp"],
+            not_afk_event_ts,
+            "Steady-state not-afk heartbeat predates the not-afk event"
+            " — would be stored as a same-timestamp duplicate (#61)",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
