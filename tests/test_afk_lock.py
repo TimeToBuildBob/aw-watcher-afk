@@ -143,6 +143,36 @@ class ScreenLockTests(unittest.TestCase):
         )
         self.assertEqual(calls[1].kwargs["duration"], 200.0)
 
+    def test_steady_heartbeat_after_afk_timeout_return_stays_ordered(self):
+        # After returning from idle-timeout AFK (no lock), the not-afk event
+        # is sent at afk_end + 1ms.  If no further input arrives before the
+        # next poll, last_input equals afk_end and the naive steady-state
+        # ping would go to afk_end — 1ms before the event it should extend.
+        # That heartbeat fails heartbeat_merge and accumulates as a
+        # same-timestamp duplicate (aw-watcher-afk#61).
+        #
+        # Samples:
+        #   poll 1: 200s idle → becomes AFK
+        #   poll 2: 2s since input → no longer AFK (afk_end = NOW + 5s − 2s)
+        #   poll 3: 7s since input → steady-state, still no new input
+        calls = self.run_loop([(200.0, False), (2.0, False), (7.0, False)])
+
+        # poll 1 → 2 pings (not-afk close + afk start)
+        # poll 2 → 2 pings (afk close + not-afk start)
+        # poll 3 → 1 ping  (steady-state not-afk)
+        self.assertEqual(
+            [c.args[0] for c in calls], [False, True, True, False, False]
+        )
+        # calls[3] is the not-afk transition event at afk_end + 1ms.
+        not_afk_event_ts = calls[3].kwargs["timestamp"]
+        # calls[4] is the first steady-state heartbeat after return from AFK.
+        self.assertGreaterEqual(
+            calls[4].kwargs["timestamp"],
+            not_afk_event_ts,
+            "Steady-state not-afk heartbeat predates the not-afk event"
+            " — would be stored as a same-timestamp duplicate (#61)",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
